@@ -139,9 +139,13 @@ function broadcastLevels() {
 playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, broadcastLevels);
 playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, broadcastLevels);
 
+// Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
+// WHICH receiver actually ran — that ambiguity already cost one round of debugging.
+const RECEIVER_V = 4;
+
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
-  try { context.sendCustomMessage(CHANNEL_NS, undefined, Object.assign({ type: 'debug' }, payload)); } catch (e) {}
+  try { context.sendCustomMessage(CHANNEL_NS, undefined, Object.assign({ type: 'debug', v: RECEIVER_V }, payload)); } catch (e) {}
 }
 
 // Life of a load, event by event: where a silent black screen actually stops is here, not a guess.
@@ -175,13 +179,20 @@ context.addCustomMessageListener(CHANNEL_NS, function (event) {
   if (!player || typeof player.configure !== 'function') return;
   const h = Number(data.maxHeight) || 0;
   // 0 = back to auto. The restriction alone only governs NEW fetches: with a full buffer the
-  // visible switch was minutes away, so the best allowed variant is selected NOW, buffer cleared.
+  // visible switch was minutes away, so each stream kind gets its own fast path.
   player.configure({ abr: { restrictions: { maxHeight: h > 0 ? h : Infinity } } });
-  if (h > 0 && typeof player.getVariantTracks === 'function' && typeof player.selectVariantTrack === 'function') {
-    const allowed = player.getVariantTracks().filter(function (t) { return t.height && t.height <= h; });
-    allowed.sort(function (a, b) { return (b.height - a.height) || ((b.bandwidth || 0) - (a.bandwidth || 0)); });
-    // safeMargin keeps 2s ahead of the playhead: clearing INTO it wedged the player on a spinner.
-    if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true, 2);
+  if (h > 0 && typeof player.getVariantTracks === 'function') {
+    // LIVE never clears the buffer: measured on the field, clearing under the playhead wedged the
+    // pipeline on BUFFERING+PAUSE for good. A seek to the edge is the receiver's daily bread and
+    // the edge has almost nothing buffered, so the capped variant shows within seconds.
+    if (typeof player.isLive === 'function' && player.isLive()) {
+      if (typeof player.goToLive === 'function') player.goToLive();
+    } else if (typeof player.selectVariantTrack === 'function') {
+      const allowed = player.getVariantTracks().filter(function (t) { return t.height && t.height <= h; });
+      allowed.sort(function (a, b) { return (b.height - a.height) || ((b.bandwidth || 0) - (a.bandwidth || 0)); });
+      // safeMargin keeps 2s ahead of the playhead: clearing INTO it wedges players.
+      if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true, 2);
+    }
   }
   setTimeout(broadcastLevels, 1000);
 });
