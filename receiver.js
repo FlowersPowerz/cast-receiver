@@ -188,8 +188,10 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, function (
 });
 
 context.start({
-  // shaka on HLS too, so DRM config and the request handlers above work on every stream type.
-  useShakaForHls: true,
+  // MPL for HLS, shaka for DASH: measured on a Samsung panel, shaka's TS transmux downloads
+  // segments for ever and never produces LOADED_METADATA. The request handlers apply to both
+  // players, and every DRM stream here is DASH, which stays on shaka regardless.
+  useShakaForHls: false,
   customNamespaces: (function () { const ns = {}; ns[CHANNEL_NS] = cast.framework.system.MessageType.JSON; return ns; })(),
   // Default idle timeout: a live stream keeps reporting progress and stays alive, a stopped VOD should not.
   disableIdleTimeout: false,
