@@ -180,7 +180,8 @@ context.addCustomMessageListener(CHANNEL_NS, function (event) {
   if (h > 0 && typeof player.getVariantTracks === 'function' && typeof player.selectVariantTrack === 'function') {
     const allowed = player.getVariantTracks().filter(function (t) { return t.height && t.height <= h; });
     allowed.sort(function (a, b) { return (b.height - a.height) || ((b.bandwidth || 0) - (a.bandwidth || 0)); });
-    if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true);
+    // safeMargin keeps 2s ahead of the playhead: clearing INTO it wedged the player on a spinner.
+    if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true, 2);
   }
   setTimeout(broadcastLevels, 1000);
 });
