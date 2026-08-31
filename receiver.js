@@ -141,7 +141,7 @@ playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, 
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 4;
+const RECEIVER_V = 5;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
@@ -178,22 +178,10 @@ context.addCustomMessageListener(CHANNEL_NS, function (event) {
   const player = innerPlayerOrNull();
   if (!player || typeof player.configure !== 'function') return;
   const h = Number(data.maxHeight) || 0;
-  // 0 = back to auto. The restriction alone only governs NEW fetches: with a full buffer the
-  // visible switch was minutes away, so each stream kind gets its own fast path.
+  // Restrictions ONLY, nothing clever: the variant jump with a cleared buffer, its safeMargin
+  // variant and the edge seek all wedged the box's pipeline on BUFFERING+PAUSE (measured). The
+  // sender now applies a cap by reloading; this stays for senders already installed.
   player.configure({ abr: { restrictions: { maxHeight: h > 0 ? h : Infinity } } });
-  if (h > 0 && typeof player.getVariantTracks === 'function') {
-    // LIVE never clears the buffer: measured on the field, clearing under the playhead wedged the
-    // pipeline on BUFFERING+PAUSE for good. A seek to the edge is the receiver's daily bread and
-    // the edge has almost nothing buffered, so the capped variant shows within seconds.
-    if (typeof player.isLive === 'function' && player.isLive()) {
-      if (typeof player.goToLive === 'function') player.goToLive();
-    } else if (typeof player.selectVariantTrack === 'function') {
-      const allowed = player.getVariantTracks().filter(function (t) { return t.height && t.height <= h; });
-      allowed.sort(function (a, b) { return (b.height - a.height) || ((b.bandwidth || 0) - (a.bandwidth || 0)); });
-      // safeMargin keeps 2s ahead of the playhead: clearing INTO it wedges players.
-      if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true, 2);
-    }
-  }
   setTimeout(broadcastLevels, 1000);
 });
 
