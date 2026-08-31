@@ -144,6 +144,30 @@ function debugToSender(payload) {
   try { context.sendCustomMessage(CHANNEL_NS, undefined, Object.assign({ type: 'debug' }, payload)); } catch (e) {}
 }
 
+// Life of a load, event by event: where a silent black screen actually stops is here, not a guess.
+var seenEvents = {};
+[
+  'PLAYER_LOAD_COMPLETE', 'LOADED_METADATA', 'LOADED_DATA', 'CAN_PLAY', 'PLAYING',
+  'WAITING', 'BUFFERING', 'STALLED', 'SUSPEND', 'RATE_CHANGE', 'PAUSE',
+].forEach(function (name) {
+  var type = cast.framework.events.EventType[name];
+  if (!type) return;
+  playerManager.addEventListener(type, function () {
+    seenEvents[name] = (seenEvents[name] || 0) + 1;
+    if (seenEvents[name] > 3) return;
+    var stats = null;
+    try { var st = playerManager.getStats(); stats = st.width + 'x' + st.height + '@' + Math.round(st.streamBandwidth / 1000) + 'k'; } catch (e) {}
+    debugToSender({ what: 'ev', ev: name, n: seenEvents[name], stats: stats });
+  });
+});
+playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, function (event) {
+  var state = event.mediaStatus && event.mediaStatus.playerState;
+  if (state && state !== seenEvents._lastState) {
+    seenEvents._lastState = state;
+    debugToSender({ what: 'state', state: state });
+  }
+});
+
 context.addCustomMessageListener(CHANNEL_NS, function (event) {
   const data = event.data || {};
   if (data.type !== 'cap') return;
