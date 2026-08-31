@@ -174,8 +174,14 @@ context.addCustomMessageListener(CHANNEL_NS, function (event) {
   const player = innerPlayerOrNull();
   if (!player || typeof player.configure !== 'function') return;
   const h = Number(data.maxHeight) || 0;
-  // 0 = back to auto. Applies on the next segment: no reload needed on this path.
+  // 0 = back to auto. The restriction alone only governs NEW fetches: with a full buffer the
+  // visible switch was minutes away, so the best allowed variant is selected NOW, buffer cleared.
   player.configure({ abr: { restrictions: { maxHeight: h > 0 ? h : Infinity } } });
+  if (h > 0 && typeof player.getVariantTracks === 'function' && typeof player.selectVariantTrack === 'function') {
+    const allowed = player.getVariantTracks().filter(function (t) { return t.height && t.height <= h; });
+    allowed.sort(function (a, b) { return (b.height - a.height) || ((b.bandwidth || 0) - (a.bandwidth || 0)); });
+    if (allowed.length && !allowed[0].active) player.selectVariantTrack(allowed[0], true);
+  }
   setTimeout(broadcastLevels, 1000);
 });
 
