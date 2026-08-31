@@ -92,6 +92,45 @@ playerManager.setMessageInterceptor(
   }
 );
 
+// --- Quality channel. Where the runtime exposes its inner player the sender gets the REAL variant
+// ladder and can cap it live; where it does not, the sender silently falls back to reload-with-cap.
+const CHANNEL_NS = 'urn:x-cast:app.mediaclient.cast';
+
+function innerPlayerOrNull() {
+  return typeof playerManager.getShakaPlayer === 'function' ? playerManager.getShakaPlayer() : null;
+}
+
+function broadcastLevels() {
+  const player = innerPlayerOrNull();
+  if (!player || typeof player.getVariantTracks !== 'function') return;
+  const byHeight = new Map();
+  player.getVariantTracks().forEach(function (t) {
+    if (!t.height) return;
+    const cur = byHeight.get(t.height);
+    if (!cur || (t.bandwidth || 0) > cur.bandwidth) {
+      byHeight.set(t.height, { height: t.height, width: t.width || 0, bandwidth: t.bandwidth || 0, active: !!t.active });
+    } else if (t.active) {
+      cur.active = true;
+    }
+  });
+  const levels = Array.from(byHeight.values()).sort(function (a, b) { return b.height - a.height; });
+  if (levels.length) context.sendCustomMessage(CHANNEL_NS, undefined, { type: 'levels', levels: levels });
+}
+
+playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, broadcastLevels);
+playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, broadcastLevels);
+
+context.addCustomMessageListener(CHANNEL_NS, function (event) {
+  const data = event.data || {};
+  if (data.type !== 'cap') return;
+  const player = innerPlayerOrNull();
+  if (!player || typeof player.configure !== 'function') return;
+  const h = Number(data.maxHeight) || 0;
+  // 0 = back to auto. Applies on the next segment: no reload needed on this path.
+  player.configure({ abr: { restrictions: { maxHeight: h > 0 ? h : Infinity } } });
+  setTimeout(broadcastLevels, 1000);
+});
+
 // Logged only: the default CAF error screen is the one the viewer should see.
 playerManager.addEventListener(cast.framework.events.EventType.ERROR, function (event) {
   console.error('playback error', event.detailedErrorCode, event.error);
@@ -100,6 +139,7 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, function (
 context.start({
   // shaka on HLS too, so DRM config and the request handlers above work on every stream type.
   useShakaForHls: true,
+  customNamespaces: (function () { const ns = {}; ns[CHANNEL_NS] = cast.framework.system.MessageType.JSON; return ns; })(),
   // Default idle timeout: a live stream keeps reporting progress and stays alive, a stopped VOD should not.
   disableIdleTimeout: false,
 });
