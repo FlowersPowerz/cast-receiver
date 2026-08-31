@@ -58,6 +58,19 @@ playerManager.setMessageInterceptor(
       ctype: request.media.contentType || null,
       stype: request.media.streamType || null,
     });
+    // Mixed-content verdict: can this https page fetch a LAN http url at all? One probe says it.
+    var probeUrl = String(request.media.contentUrl || request.media.contentId || '');
+    if (probeUrl.indexOf('http://') === 0) {
+      try {
+        fetch(probeUrl, { method: 'GET', headers: { Range: 'bytes=0-1' } }).then(function (r) {
+          debugToSender({ what: 'probe', ok: true, status: r.status });
+        }).catch(function (e) {
+          debugToSender({ what: 'probe', ok: false, err: String(e).slice(0, 200) });
+        });
+      } catch (e) {
+        debugToSender({ what: 'probe', ok: false, err: 'throw ' + String(e).slice(0, 180) });
+      }
+    }
 
     if (baseConfig === null) {
       baseConfig = Object.assign({}, playerManager.getPlaybackConfig() || new cast.framework.PlaybackConfig());
