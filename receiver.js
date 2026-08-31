@@ -62,6 +62,10 @@ playerManager.setMessageInterceptor(
     const licenseUrl = typeof data.licenseUrl === 'string' && data.licenseUrl ? data.licenseUrl : null;
     // Start high instead of crawling up: live channels were anchoring at the lowest rendition.
     const shakaConfig = { abr: { defaultBandwidthEstimate: 8000000 } };
+    // The sender's quality cap: shaka reads restrictions at load, which is why a change reloads.
+    if (typeof data.maxHeight === 'number' && data.maxHeight > 0) {
+      shakaConfig.abr.restrictions = { maxHeight: data.maxHeight };
+    }
 
     if (isNonEmptyObject(data.clearkeys)) {
       // shaka takes the hex kid -> hex key map verbatim, which is the form the sender already carries.
