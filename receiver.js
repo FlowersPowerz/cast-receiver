@@ -60,7 +60,8 @@ playerManager.setMessageInterceptor(
 
     const drmType = String(data.drmType || 'NONE').toUpperCase();
     const licenseUrl = typeof data.licenseUrl === 'string' && data.licenseUrl ? data.licenseUrl : null;
-    const shakaConfig = {};
+    // Start high instead of crawling up: live channels were anchoring at the lowest rendition.
+    const shakaConfig = { abr: { defaultBandwidthEstimate: 8000000 } };
 
     if (isNonEmptyObject(data.clearkeys)) {
       // shaka takes the hex kid -> hex key map verbatim, which is the form the sender already carries.
