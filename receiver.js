@@ -52,6 +52,12 @@ playerManager.setMessageInterceptor(
     const data = request.media.customData || request.customData || {};
 
     if (data.debug === true) enableDebugOverlay();
+    debugToSender({
+      what: 'load',
+      url: String(request.media.contentUrl || request.media.contentId || '').slice(0, 160),
+      ctype: request.media.contentType || null,
+      stype: request.media.streamType || null,
+    });
 
     if (baseConfig === null) {
       baseConfig = Object.assign({}, playerManager.getPlaybackConfig() || new cast.framework.PlaybackConfig());
@@ -120,6 +126,11 @@ function broadcastLevels() {
 playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, broadcastLevels);
 playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, broadcastLevels);
 
+// The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
+function debugToSender(payload) {
+  try { context.sendCustomMessage(CHANNEL_NS, undefined, Object.assign({ type: 'debug' }, payload)); } catch (e) {}
+}
+
 context.addCustomMessageListener(CHANNEL_NS, function (event) {
   const data = event.data || {};
   if (data.type !== 'cap') return;
@@ -131,9 +142,12 @@ context.addCustomMessageListener(CHANNEL_NS, function (event) {
   setTimeout(broadcastLevels, 1000);
 });
 
-// Logged only: the default CAF error screen is the one the viewer should see.
+// Logged AND reported to the sender: the default CAF error screen stays for the viewer.
 playerManager.addEventListener(cast.framework.events.EventType.ERROR, function (event) {
   console.error('playback error', event.detailedErrorCode, event.error);
+  var detail = null;
+  try { detail = JSON.stringify(event.error).slice(0, 400); } catch (e) {}
+  debugToSender({ what: 'error', code: event.detailedErrorCode || 0, reason: event.reason || null, detail: detail });
 });
 
 context.start({
