@@ -185,7 +185,9 @@ function styleProbe(when) {
     cues: cues,
   });
   const css = cueStyleRules();
-  debugToSender({ what: 'cuecss', when: when, css: css ? css.slice(0, 300) : null });
+  // The TAIL: CAF writes its own defaults first and the sender's style after, so the head of the
+  // sheet is always the same six rules and says nothing.
+  debugToSender({ what: 'cuecss', when: when, css: css ? css.slice(-300) : null });
 }
 
 // Late samples too: at load complete no cue is on screen yet, and an empty screen proves nothing.
@@ -197,7 +199,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 10;
+const RECEIVER_V = 11;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
