@@ -153,89 +153,11 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
   } catch (e) {
     debugToSender({ what: 'ttstyle', ok: false, err: String(e).slice(0, 160) });
   }
-  // The DASH text renderer ignores TextTrackStyle through every sanctioned channel (measured:
-  // applied ok, drawn default): CSS with !important is what actually reaches its elements.
-  try { applyStyleCss(pendingTextStyle); } catch (e) { debugToSender({ what: 'ttcss', err: String(e).slice(0, 160) }); }
-  reportCaptionDom();
 });
-
-/** '#RRGGBBAA' (the cast wire form) to rgba(); '#RRGGBB' passes through. */
-function cssColor(hash) {
-  if (typeof hash !== 'string' || hash[0] !== '#') return null;
-  const h = hash.slice(1);
-  if (h.length === 6) return hash;
-  if (h.length !== 8) return null;
-  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
-  const a = parseInt(h.slice(6, 8), 16) / 255;
-  return 'rgba(' + r + ',' + g + ',' + b + ',' + a.toFixed(3) + ')';
-}
-
-function applyStyleCss(style) {
-  const fg = cssColor(style.foregroundColor);
-  const bg = cssColor(style.backgroundColor);
-  const edgeColor = cssColor(style.edgeColor) || '#000000';
-  const type = String(style.edgeType || '').toUpperCase();
-  let edge = '';
-  if (type === 'OUTLINE' || type === 'RAISED' || type === 'DEPRESSED') {
-    edge = 'text-shadow: -1px -1px 0 E, 1px -1px 0 E, -1px 1px 0 E, 1px 1px 0 E !important;'.replace(/E/g, edgeColor);
-  } else if (type === 'DROP_SHADOW') {
-    edge = 'text-shadow: 2px 2px 3px ' + edgeColor + ' !important;';
-  } else if (type === 'NONE') {
-    edge = 'text-shadow: none !important;';
-  }
-  const scale = typeof style.fontScale === 'number' && style.fontScale > 0 ? style.fontScale : 1;
-  const bolder = style.fontStyle === 'BOLD' || style.fontStyle === 'BOLD_ITALIC';
-  const italic = style.fontStyle === 'ITALIC' || style.fontStyle === 'BOLD_ITALIC';
-  const decl =
-    (fg ? 'color: ' + fg + ' !important;' : '') +
-    (bg ? 'background-color: ' + bg + ' !important;' : '') +
-    'font-size: ' + Math.round(scale * 100) + '% !important;' + edge +
-    (bolder ? 'font-weight: bold !important;' : '') +
-    (italic ? 'font-style: italic !important;' : '');
-  const css = 'video::cue { ' + decl + ' }\n' +
-    '.shaka-text-container, .shaka-text-container * { ' + decl + ' }';
-  const host = document.querySelector('cast-media-player');
-  const roots = [document.head];
-  if (host && host.shadowRoot) roots.push(host.shadowRoot);
-  roots.forEach(function (root, i) {
-    let el = root.querySelector('#ttcss' + i);
-    if (!el) {
-      el = document.createElement('style');
-      el.id = 'ttcss' + i;
-      root.appendChild(el);
-    }
-    el.textContent = css;
-  });
-  debugToSender({ what: 'ttcss', ok: true, shadow: !!(host && host.shadowRoot) });
-}
-
-// The caption DOM as it really is, reported once the cues are on screen: the next hunt starts from
-// facts instead of guessed class names.
-function reportCaptionDom() {
-  setTimeout(function () {
-    try {
-      const found = [];
-      const scan = function (root) {
-        root.querySelectorAll('*').forEach(function (el) {
-          const c = String(el.className || '');
-          if (/text|caption|subtitle|cue/i.test(c) && found.length < 12) {
-            found.push(el.tagName + '.' + c.slice(0, 60));
-          }
-        });
-      };
-      scan(document);
-      const host = document.querySelector('cast-media-player');
-      if (host && host.shadowRoot) scan(host.shadowRoot);
-      debugToSender({ what: 'capdom', found: found });
-    } catch (e) {
-      debugToSender({ what: 'capdom', err: String(e).slice(0, 120) });
-    }
-  }, 12000);
-}
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 7;
+const RECEIVER_V = 8;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
