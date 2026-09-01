@@ -52,11 +52,14 @@ playerManager.setMessageInterceptor(
     const data = request.media.customData || request.customData || {};
 
     if (data.debug === true) enableDebugOverlay();
+    const tts = request.media.textTrackStyle;
     debugToSender({
       what: 'load',
       url: String(request.media.contentUrl || request.media.contentId || '').slice(0, 160),
       ctype: request.media.contentType || null,
       stype: request.media.streamType || null,
+      // Whether the sender's style even reached us: everything downstream is moot without it.
+      tt: tts ? [tts.foregroundColor, tts.backgroundColor, tts.fontScale, tts.edgeType].join('/') : null,
     });
     // Mixed-content verdict: can this https page fetch a LAN http url at all? One probe says it.
     var probeUrl = String(request.media.contentUrl || request.media.contentId || '');
@@ -139,13 +142,62 @@ function broadcastLevels() {
 playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, broadcastLevels);
 playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, broadcastLevels);
 
-// No style code AT ALL, on purpose. CAF applies MediaInfo.textTrackStyle by itself — the field said
-// so: with the bare v5 the user's style reached the DASH cues — and re-applying the raw message
-// object via TextTracksManager SUCCEEDS while clobbering the good style with defaults.
+// No style code AT ALL, on purpose: re-applying the style via TextTracksManager, the sender's
+// EDIT_TRACKS_INFO after the load and the !important CSS have each been tried and each made things
+// worse. What follows only REPORTS. CAF turns MediaInfo.textTrackStyle into `[data-castcaptionsN]::cue`
+// rules in a <style id="cue-style"> inside the player's shadow root — which paints the cues only when
+// shaka draws them as NATIVE track cues (SimpleTextDisplayer). With shaka's UITextDisplayer the cues
+// are plain DOM and no ::cue rule can reach them. Which of the two is on screen decides the fix.
+
+function playerShadowRoot() {
+  const host = document.querySelector('cast-media-player');
+  return (host && host.shadowRoot) || document;
+}
+
+function cueStyleRules() {
+  const root = playerShadowRoot();
+  const el = (root.getElementById && root.getElementById('cue-style')) ||
+    root.querySelector('#cue-style') || document.getElementById('cue-style');
+  if (!el || !el.sheet) return null;
+  const out = [];
+  for (let i = 0; i < el.sheet.cssRules.length; i++) out.push(el.sheet.cssRules[i].cssText);
+  return out.join(' ');
+}
+
+function styleProbe(when) {
+  const root = playerShadowRoot();
+  const video = document.querySelector('video') || root.querySelector('video');
+  const tracks = video ? video.textTracks : null;
+  let showing = 0;
+  let cues = 0;
+  for (let i = 0; tracks && i < tracks.length; i++) {
+    if (tracks[i].mode !== 'showing') continue;
+    showing++;
+    cues += (tracks[i].activeCues || []).length;
+  }
+  debugToSender({
+    what: 'style',
+    when: when,
+    // A shaka text CONTAINER means DOM cues, i.e. the ::cue stylesheet is painting nothing.
+    ui: !!(root.querySelector('.shaka-text-container') || document.querySelector('.shaka-text-container')),
+    tt: tracks ? tracks.length : -1,
+    showing: showing,
+    cues: cues,
+  });
+  const css = cueStyleRules();
+  debugToSender({ what: 'cuecss', when: when, css: css ? css.slice(0, 300) : null });
+}
+
+// Late samples too: at load complete no cue is on screen yet, and an empty screen proves nothing.
+playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, function () {
+  styleProbe('load');
+  setTimeout(function () { styleProbe('t8'); }, 8000);
+  setTimeout(function () { styleProbe('t20'); }, 20000);
+});
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 9;
+const RECEIVER_V = 10;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
