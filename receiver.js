@@ -96,12 +96,11 @@ playerManager.setMessageInterceptor(
       // shaka takes the hex kid -> hex key map verbatim, which is the form the sender already carries.
       shakaConfig.drm = { clearKeys: Object.assign({}, data.clearkeys) };
     } else if (drmType === 'CLEARKEY' && licenseUrl) {
+      // Only useful where the manifest DECLARES ClearKey. Where it declares Widevine instead,
+      // shaka can never be talked into asking a ClearKey licence — its parser skips org.w3.clearkey
+      // on purpose ("we shouldn't put clearkey in this list") — and the phone does the exchange and
+      // sends the keys inline. Verified in the shaka 4.9.2 source, not guessed.
       shakaConfig.drm = { servers: { 'org.w3.clearkey': licenseUrl } };
-      // These manifests declare PlayReady and Widevine and no ClearKey at all, so shaka picks
-      // Widevine, finds no server for it and dies with NO_LICENSE_SERVER_GIVEN — measured on a Sky
-      // backup channel. Ignoring the manifest's DRM leaves only the configured ClearKey server; the
-      // cenc:default_KID survives it, which is what the licence request is built from.
-      shakaConfig.manifest = { dash: { ignoreDrmInfo: true } };
     } else if (drmType === 'WIDEVINE' && licenseUrl) {
       config.licenseUrl = licenseUrl;
       config.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
@@ -207,7 +206,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 12;
+const RECEIVER_V = 13;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
