@@ -60,6 +60,9 @@ playerManager.setMessageInterceptor(
       stype: request.media.streamType || null,
       // Whether the sender's style even reached us: everything downstream is moot without it.
       tt: tts ? [tts.foregroundColor, tts.backgroundColor, tts.fontScale, tts.edgeType].join('/') : null,
+      // Which DRM road this load takes: inline keys, a licence server, or nothing at all.
+      drm: String(data.drmType || 'NONE') + '/' + Object.keys(data.clearkeys || {}).length +
+        (data.licenseUrl ? '/srv' : ''),
     });
     // Mixed-content verdict: can this https page fetch a LAN http url at all? One probe says it.
     var probeUrl = String(request.media.contentUrl || request.media.contentId || '');
@@ -94,6 +97,11 @@ playerManager.setMessageInterceptor(
       shakaConfig.drm = { clearKeys: Object.assign({}, data.clearkeys) };
     } else if (drmType === 'CLEARKEY' && licenseUrl) {
       shakaConfig.drm = { servers: { 'org.w3.clearkey': licenseUrl } };
+      // These manifests declare PlayReady and Widevine and no ClearKey at all, so shaka picks
+      // Widevine, finds no server for it and dies with NO_LICENSE_SERVER_GIVEN — measured on a Sky
+      // backup channel. Ignoring the manifest's DRM leaves only the configured ClearKey server; the
+      // cenc:default_KID survives it, which is what the licence request is built from.
+      shakaConfig.manifest = { dash: { ignoreDrmInfo: true } };
     } else if (drmType === 'WIDEVINE' && licenseUrl) {
       config.licenseUrl = licenseUrl;
       config.protectionSystem = cast.framework.ContentProtection.WIDEVINE;
@@ -199,7 +207,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 11;
+const RECEIVER_V = 12;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
