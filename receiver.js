@@ -13,10 +13,6 @@ const FORBIDDEN_HEADERS = new Set([
 // Captured on the first load: cloning from it keeps a previous item's DRM config out of the next one.
 let baseConfig = null;
 
-// The sender's subtitle style. CAF does not apply MediaInfo.textTrackStyle by itself when shaka
-// renders the cues, so it is re-applied explicitly once each load completes.
-let pendingTextStyle = null;
-
 function sanitizeHeaders(headers) {
   const clean = {};
   if (!headers || typeof headers !== 'object') return clean;
@@ -54,8 +50,6 @@ playerManager.setMessageInterceptor(
 
     // The sender puts everything on MediaInfo.customData; LoadRequestData.customData is the fallback.
     const data = request.media.customData || request.customData || {};
-
-    pendingTextStyle = request.media.textTrackStyle || null;
 
     if (data.debug === true) enableDebugOverlay();
     debugToSender({
@@ -145,19 +139,13 @@ function broadcastLevels() {
 playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, broadcastLevels);
 playerManager.addEventListener(cast.framework.events.EventType.BITRATE_CHANGED, broadcastLevels);
 
-playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, function () {
-  if (!pendingTextStyle) return;
-  try {
-    playerManager.getTextTracksManager().setTextTrackStyle(pendingTextStyle);
-    debugToSender({ what: 'ttstyle', ok: true });
-  } catch (e) {
-    debugToSender({ what: 'ttstyle', ok: false, err: String(e).slice(0, 160) });
-  }
-});
+// No style code AT ALL, on purpose. CAF applies MediaInfo.textTrackStyle by itself — the field said
+// so: with the bare v5 the user's style reached the DASH cues — and re-applying the raw message
+// object via TextTracksManager SUCCEEDS while clobbering the good style with defaults.
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 8;
+const RECEIVER_V = 9;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
