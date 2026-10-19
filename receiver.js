@@ -46,7 +46,11 @@ function enableDebugOverlay() {
 playerManager.setMessageInterceptor(
   cast.framework.messages.MessageType.LOAD,
   function (request) {
-    if (!request || !request.media) return request;
+    if (!request) return request;
+    // A queue load may name its media only inside the queue.
+    const queued = request.queueData && request.queueData.items && request.queueData.items[request.queueData.startIndex || 0];
+    if (!request.media && queued && queued.media) request.media = queued.media;
+    if (!request.media) return request;
 
     // The sender puts everything on MediaInfo.customData; LoadRequestData.customData is the fallback.
     const data = request.media.customData || request.customData || {};
@@ -82,6 +86,18 @@ playerManager.setMessageInterceptor(
       baseConfig = Object.assign({}, playerManager.getPlaybackConfig() || new cast.framework.PlaybackConfig());
     }
     const config = Object.assign(new cast.framework.PlaybackConfig(), baseConfig);
+
+    // Music: no video tuning, and headers for the item on air, read at request time (the queue mixes sources).
+    if (data.kind === 'music') {
+      musicHeaders = sanitizeHeaders(data.headers);
+      const apply = function (requestInfo) {
+        if (Object.keys(musicHeaders).length > 0) requestInfo.headers = Object.assign({}, requestInfo.headers, musicHeaders);
+      };
+      config.manifestRequestHandler = apply;
+      config.segmentRequestHandler = apply;
+      playerManager.setPlaybackConfig(config);
+      return request;
+    }
 
     const drmType = String(data.drmType || 'NONE').toUpperCase();
     const licenseUrl = typeof data.licenseUrl === 'string' && data.licenseUrl ? data.licenseUrl : null;
@@ -120,6 +136,87 @@ playerManager.setMessageInterceptor(
     return request;
   }
 );
+
+// --- Music. Headers of the item on air, and its ReplayGain as the media element's volume: attenuation only, so the
+// system volume and the peak are never exceeded.
+let musicHeaders = {};
+
+function currentCustomData() {
+  const media = playerManager.getMediaInformation();
+  return (media && media.customData) || {};
+}
+
+function mediaElement() {
+  const root = playerShadowRoot();
+  return root.querySelector('video, audio') || document.querySelector('video, audio');
+}
+
+function trackGain(data) {
+  if (data.kind !== 'music' || typeof data.gainDb !== 'number') return 1;
+  let gain = Math.min(1, Math.pow(10, data.gainDb / 20));
+  if (typeof data.peak === 'number' && data.peak > 0) gain = Math.min(gain, 1 / data.peak);
+  return gain;
+}
+
+let lastGain = null;
+function applyItem() {
+  const data = currentCustomData();
+  if (data.kind === 'music') musicHeaders = sanitizeHeaders(data.headers);
+  const el = mediaElement();
+  if (!el) return;
+  const gain = trackGain(data);
+  if (el.volume !== gain) el.volume = gain;
+  if (gain !== lastGain) {
+    lastGain = gain;
+    debugToSender({ what: 'gain', gain: Math.round(gain * 1000) / 1000 });
+  }
+}
+
+let lastItemId = null;
+playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, applyItem);
+playerManager.addEventListener(cast.framework.events.EventType.PLAYING, applyItem);
+playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, function (event) {
+  const id = event.mediaStatus && event.mediaStatus.currentItemId;
+  if (id === lastItemId) return;
+  lastItemId = id;
+  applyItem();
+});
+
+// Which audio types this device decodes, asked by the sender at every connection. `samplerate` is ours: the media
+// type parser does not know it, MediaCapabilities does.
+function parseType(entry) {
+  const parts = String(entry).split(';').map(function (p) { return p.trim(); });
+  const out = { mime: parts[0], codecs: undefined, rate: undefined };
+  parts.slice(1).forEach(function (p) {
+    const kv = p.split('=');
+    const value = (kv[1] || '').replace(/"/g, '');
+    if (kv[0] === 'codecs') out.codecs = value;
+    if (kv[0] === 'samplerate') out.rate = Number(value) || undefined;
+  });
+  return out;
+}
+
+function canPlay(entry) {
+  const t = parseType(entry);
+  const display = function () {
+    try { return !!context.canDisplayType(t.mime, t.codecs); } catch (e) { return false; }
+  };
+  if (!t.rate || !navigator.mediaCapabilities) return Promise.resolve(display());
+  const contentType = t.mime + (t.codecs ? '; codecs="' + t.codecs + '"' : '');
+  return navigator.mediaCapabilities
+    .decodingInfo({ type: 'file', audio: { contentType: contentType, samplerate: t.rate, channels: '2' } })
+    .then(function (r) { return !!r.supported && display(); })
+    .catch(display);
+}
+
+function answerCaps(senderId, types) {
+  const list = Array.isArray(types) ? types.slice(0, 40) : [];
+  Promise.all(list.map(canPlay)).then(function (results) {
+    const ok = {};
+    list.forEach(function (type, i) { ok[type] = results[i]; });
+    context.sendCustomMessage(CHANNEL_NS, senderId, { type: 'caps', v: RECEIVER_V, ok: ok });
+  });
+}
 
 // --- Quality channel. Where the runtime exposes its inner player the sender gets the REAL variant
 // ladder and can cap it live; where it does not, the sender silently falls back to reload-with-cap.
@@ -206,7 +303,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 13;
+const RECEIVER_V = 14;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
@@ -239,6 +336,7 @@ playerManager.addEventListener(cast.framework.events.EventType.MEDIA_STATUS, fun
 
 context.addCustomMessageListener(CHANNEL_NS, function (event) {
   const data = event.data || {};
+  if (data.type === 'caps') return answerCaps(event.senderId, data.types);
   if (data.type !== 'cap') return;
   const player = innerPlayerOrNull();
   if (!player || typeof player.configure !== 'function') return;
