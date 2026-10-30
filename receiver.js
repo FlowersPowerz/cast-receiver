@@ -106,6 +106,8 @@ playerManager.setMessageInterceptor(
     // The sender's quality cap: shaka reads restrictions at load, which is why a change reloads.
     if (typeof data.maxHeight === 'number' && data.maxHeight > 0) {
       shakaConfig.abr.restrictions = { maxHeight: data.maxHeight };
+      // A rung picked from the real ladder is a choice, not a ceiling: ABR sat lower on every stall.
+      if (data.pinHeight === true) shakaConfig.abr.restrictions.minHeight = data.maxHeight;
     }
 
     if (isNonEmptyObject(data.clearkeys)) {
@@ -226,11 +228,22 @@ function innerPlayerOrNull() {
   return typeof playerManager.getShakaPlayer === 'function' ? playerManager.getShakaPlayer() : null;
 }
 
+// The WHOLE ladder: getVariantTracks drops what the cap restricts, and the sender could never go back up.
+function allVariants(player) {
+  const tracks = player.getVariantTracks();
+  const manifest = typeof player.getManifest === 'function' ? player.getManifest() : null;
+  if (!manifest || !Array.isArray(manifest.variants)) return tracks;
+  const activeIds = new Set(tracks.filter(function (t) { return t.active; }).map(function (t) { return t.id; }));
+  return manifest.variants.filter(function (v) { return v.video; }).map(function (v) {
+    return { height: v.video.height, width: v.video.width, bandwidth: v.bandwidth, active: activeIds.has(v.id) };
+  });
+}
+
 function broadcastLevels() {
   const player = innerPlayerOrNull();
   if (!player || typeof player.getVariantTracks !== 'function') return;
   const byHeight = new Map();
-  player.getVariantTracks().forEach(function (t) {
+  allVariants(player).forEach(function (t) {
     if (!t.height) return;
     const cur = byHeight.get(t.height);
     if (!cur || (t.bandwidth || 0) > cur.bandwidth) {
@@ -303,7 +316,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 14;
+const RECEIVER_V = 15;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
