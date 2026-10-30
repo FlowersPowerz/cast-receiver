@@ -316,7 +316,7 @@ playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPL
 
 // Bumped on every deploy: Pages caches ~10 min, and without this the sender log cannot say
 // WHICH receiver actually ran — that ambiguity already cost one round of debugging.
-const RECEIVER_V = 15;
+const RECEIVER_V = 16;
 
 // The receiver's own eyes, sent to the sender: devtools is not reachable on every device.
 function debugToSender(payload) {
@@ -368,6 +368,35 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, function (
   try { detail = JSON.stringify(event.error).slice(0, 400); } catch (e) {}
   debugToSender({ what: 'error', code: event.detailedErrorCode || 0, reason: event.reason || null, detail: detail });
 });
+
+// Why a receiver closes after a while: a heartbeat with memory and buffer, and the system's own reason.
+setInterval(function () {
+  var hb = { what: 'hb' };
+  try { hb.state = playerManager.getPlayerState(); } catch (e) {}
+  try { if (performance.memory) hb.heapMb = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (e) {}
+  try {
+    var v = document.querySelector('cast-media-player') && document.querySelector('cast-media-player').shadowRoot;
+    var el = (v && v.querySelector('video')) || document.querySelector('video');
+    if (el) {
+      hb.t = Math.round(el.currentTime);
+      if (el.buffered.length) hb.ahead = Math.round((el.buffered.end(el.buffered.length - 1) - el.currentTime) * 10) / 10;
+      var q = el.getVideoPlaybackQuality && el.getVideoPlaybackQuality();
+      if (q) hb.dropped = q.droppedVideoFrames + '/' + q.totalVideoFrames;
+    }
+  } catch (e) {}
+  try { var st = playerManager.getStats(); hb.h = st.height; hb.estKbps = Math.round(st.estimatedBandwidth / 1000); } catch (e) {}
+  try { hb.senders = context.getSenders().length; } catch (e) {}
+  debugToSender(hb);
+}, 30000);
+[cast.framework.system.EventType.SHUTDOWN, cast.framework.system.EventType.SENDER_DISCONNECTED,
+  cast.framework.system.EventType.ERROR]
+  .filter(Boolean)
+  .forEach(function (type) {
+    context.addEventListener(type, function (event) {
+      debugToSender({ what: 'system', type: type, reason: event && (event.reason || event.data) || null });
+    });
+  });
+window.addEventListener('error', function (e) { debugToSender({ what: 'jserror', msg: String(e.message).slice(0, 200) }); });
 
 context.start({
   // MPL for HLS, shaka for DASH: measured on a Samsung panel, shaka's TS transmux downloads
